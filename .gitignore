@@ -1,0 +1,22 @@
+# Generated environments, model assets, private local settings and outputs.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+models/*.task
+models/*.download
+recordings/
+logs/
+demo-recordings/
+*-validation/
+*.jsonl
+*.log
+*.avi
+*.mp4
+*.wav
+*.png
+*.jpg
+*.jpeg
+config-local*.json
