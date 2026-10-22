@@ -70,12 +70,13 @@ already exists.
 
 ## Environment and scope
 
-Local Mac verification (Python 3.11.2, site packages disabled): 24 new mock and
-fake app-loop tests pass. Together with the existing core, multitrack,
-association, screen-clock, dropout, beat-line and health suites, 167 tests pass.
-The full `run_tests.py` hardware-isolated suite could not start because this
-interpreter lacks `cv2`; no packages were installed. These subset results do not
-replace the full suite or validate native preview, MediaPipe or audio on Mac.
+Local Mac verification now uses a project-only `.venv` with Python 3.11.2 and
+the separate [Mac lock](requirements-macos-lock.txt). The full guarded runner
+executes 532 tests with zero failures/errors, one Windows-only skip, nine
+isolation self-checks and zero forbidden device attempts. The 25 mock/app-loop
+tests also run with site packages disabled. Independent review found and verified
+the detector-reset authorization fix described above. This does not validate
+native preview, MediaPipe model initialization, audio or physical execution.
 
 The published Windows baseline is `fc3791e99e4f8e039cc50a75c964423dc254829b`.
 Later uncommitted Windows changes have not been inspected. Existing configs

@@ -1,0 +1,9 @@
+# Python 3.11 / Apple Silicon. Preserve the published conductor versions.
+-r requirements-lock.txt
+# Native metadata discovery dependencies absent from the Windows lock.
+pyobjc-core==12.2.2; sys_platform == 'darwin'
+pyobjc-framework-AVFoundation==12.2.2; sys_platform == 'darwin'
+pyobjc-framework-Cocoa==12.2.2; sys_platform == 'darwin'
+pyobjc-framework-CoreAudio==12.2.2; sys_platform == 'darwin'
+pyobjc-framework-CoreMedia==12.2.2; sys_platform == 'darwin'
+pyobjc-framework-Quartz==12.2.2; sys_platform == 'darwin'
