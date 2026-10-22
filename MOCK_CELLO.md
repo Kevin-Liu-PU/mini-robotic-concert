@@ -74,8 +74,9 @@ replace the full suite or validate native preview, MediaPipe or audio on Mac.
 
 The published Windows baseline is `fc3791e99e4f8e039cc50a75c964423dc254829b`.
 Later uncommitted Windows changes have not been inspected. Existing configs
-default to DirectShow (`dshow`) and launchers are `.cmd`; this change does not
-claim that the real camera/audio application has been ported or validated on Mac.
+default to DirectShow (`dshow`) and launchers are `.cmd`; the separate
+[Mac camera selection change](CAMERA_SELECTION.md) adds AVFoundation selection.
+The real camera/audio application has not been validated on Mac.
 The published conductor validation uses Python 3.10.11 and NumPy 1.26.4. Cello
 requires Python >=3.11,<3.13 and NumPy >=2: keep their environments separate.
 

@@ -16,12 +16,20 @@ def rate(timestamps):
             if len(timestamps)>1 and timestamps[-1]>timestamps[0] else 0.0)
 
 
+def open_selected_camera(cfg):
+    import cv2
+    from .devices import backend_id, verify_mac_camera
+    if cfg['camera_backend'] == 'avfoundation':
+        verify_mac_camera(cfg)
+    return cv2.VideoCapture(cfg['camera_index'], backend_id(cfg['camera_backend']))
+
+
 def _capture_worker(cfg, pixels, metadata, stop_event):
     # DirectShow opens on this PROCESS's main thread, without MediaPipe/UI.
     import cv2
     import numpy as np
     cv2.setNumThreads(1)
-    backend={"dshow":cv2.CAP_DSHOW,"msmf":cv2.CAP_MSMF,"auto":cv2.CAP_ANY}[cfg["camera_backend"]]
+    native_format = cfg['camera_backend'] == 'avfoundation'
     target=np.frombuffer(pixels,dtype=np.uint8)
     times=deque(maxlen=180)
     reads=duplicates=sequence=0
@@ -41,13 +49,14 @@ def _capture_worker(cfg, pixels, metadata, stop_event):
                 metadata[STATE]=0 if attempt==1 else 2
                 metadata[ATTEMPT]=attempt
                 metadata[FPS]=0
-                metadata[FORMAT]=0 if fourcc=="MJPG" else 1
-            cap=cv2.VideoCapture(cfg["camera_index"],backend)
+                metadata[FORMAT]=2 if native_format else (0 if fourcc=="MJPG" else 1)
+            cap=open_selected_camera(cfg)
             if not cap.isOpened():
                 with metadata.get_lock():
                     metadata[STATE]=3
                 return
-            cap.set(cv2.CAP_PROP_FOURCC,cv2.VideoWriter_fourcc(*fourcc))
+            if not native_format:
+                cap.set(cv2.CAP_PROP_FOURCC,cv2.VideoWriter_fourcc(*fourcc))
             cap.set(cv2.CAP_PROP_FRAME_WIDTH,width)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT,height)
             cap.set(cv2.CAP_PROP_FPS,fps)
@@ -159,7 +168,7 @@ class Camera:
                 "capture_fps_recent":round(v[FPS],2) if now-v[LAST_READ]<1.5 else 0.0,
                 "capture_fps_overall":round(v[OVERALL_FPS],2),
                 "fresh_frame_age_s":round(age,3) if age is not None else None,
-                "requested_fourcc":"MJPG" if v[FORMAT]==0 else "YUY2",
+                "requested_fourcc":{0:"MJPG",1:"YUY2",2:"NATIVE"}.get(v[FORMAT],"UNKNOWN"),
                 "capture_attempt":int(v[ATTEMPT]),"mode":mode,"status":status,
                 "worker_pid":self.process.pid,"worker_alive":self.process.is_alive()}
 

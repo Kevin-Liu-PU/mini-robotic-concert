@@ -24,8 +24,8 @@ def load_config(path=None):
         raise ValueError('num_hands must be 1 (show only one hand) or 2')
     if cfg["hand"] not in ("any", "Left", "Right"):
         raise ValueError("hand must be any, Left or Right")
-    if cfg["camera_backend"] not in ("dshow", "msmf", "auto"):
-        raise ValueError("camera_backend must be dshow, msmf or auto")
+    if cfg["camera_backend"] not in ("dshow", "msmf", "auto", "avfoundation"):
+        raise ValueError("camera_backend must be dshow, msmf, auto or avfoundation")
     for key in ("width", "height", "requested_fps", "inference_width"):
         if not isinstance(cfg[key], int) or cfg[key] <= 0:
             raise ValueError(f"{key} must be a positive integer")

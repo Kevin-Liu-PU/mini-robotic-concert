@@ -152,3 +152,7 @@ scope. Physical instrument integration remains future work.
 For a standard-library-only Mac/Windows proof with no devices, run
 `python3 -B -S -m conductor.mock_cello_demo` from this directory.
 See [MOCK_CELLO.md](MOCK_CELLO.md) for single-bow controls, tests and limitations.
+
+Mac camera selection supports `--camera-built-in`, `--camera-name` and `--camera`
+with `--backend avfoundation`. See [CAMERA_SELECTION.md](CAMERA_SELECTION.md)
+for metadata-only listing, launch commands and current Mac validation limits.

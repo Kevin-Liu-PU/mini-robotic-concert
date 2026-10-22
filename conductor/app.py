@@ -102,7 +102,9 @@ def parse_args(argv=None):
     parser.add_argument("--config", help="Path to editable JSON config")
     parser.add_argument("--camera", type=int, help="OpenCV camera index")
     parser.add_argument("--camera-name", help="Unique camera name substring; resolves current backend index")
-    parser.add_argument("--backend", choices=["dshow", "msmf", "auto"])
+    parser.add_argument('--camera-built-in', action='store_true',
+                        help='Select exactly one native built-in camera by device type (Mac default without a custom config/selection)')
+    parser.add_argument("--backend", choices=["dshow", "msmf", "auto", "avfoundation"])
     parser.add_argument("--hand", choices=["any", "Left", "Right"],
                         help="Optional initial MAIN label hint only; 1/2 selects the visible A/B track")
     parser.add_argument('--num-hands',type=int,choices=(1,2),
@@ -123,6 +125,8 @@ def parse_args(argv=None):
     parser.add_argument("--record", metavar="NAME", help="Enable local silent recording; press C in preview for a 3-second countdown, then at most 45 seconds")
     parser.add_argument("--record-seconds", type=float, default=45, help="Recording limit, >0 and <=45; only with --record")
     args = parser.parse_args(argv)
+    if args.camera_built_in and (args.camera is not None or args.camera_name):
+        parser.error('--camera-built-in cannot be combined with --camera or --camera-name')
     if args.mock_cello and (args.headless or args.list_cameras):
         parser.error('--mock-cello requires interactive preview; for no-device CLI use python -m conductor.mock_cello_demo')
     if args.audio_clock and (not args.hold_clock or args.headless or args.list_cameras):
@@ -194,10 +198,9 @@ def main():
                           (args.num_hands,'num_hands')):
         if argument is not None:
             cfg[key] = argument
-    import cv2
-    import numpy as np
-    from .capture import Camera, rate
-    from .display import render
+    if not args.demo or args.list_cameras:
+        from .devices import camera_backend
+        cfg['camera_backend'] = camera_backend(cfg['camera_backend'], args.backend)
     if args.list_cameras:
         from .devices import list_devices
         print(json.dumps(list_devices(cfg["camera_backend"]),indent=2))
@@ -205,8 +208,14 @@ def main():
     if not args.demo:
         from .devices import resolve_camera
         name=args.camera_name or (cfg.get("camera_name") if args.camera is None else None)
-        cfg=resolve_camera(cfg,name)
+        builtin = args.camera_built_in or (sys.platform == 'darwin' and args.config is None
+                                          and args.camera is None and not name)
+        cfg=resolve_camera(cfg, None if builtin else name, built_in=builtin)
         print(f"Selected camera: {cfg['camera_name']} (index {cfg['camera_index']}, {cfg['camera_backend']})",flush=True)
+    import cv2
+    import numpy as np
+    from .capture import Camera, rate
+    from .display import render
     session = ConductorSession(DetectorConfig(**cfg["detector"]),
                                AssociationConfig(**cfg.get("association",{})),
                                cfg["trajectory_seconds"],cfg["hand"])
