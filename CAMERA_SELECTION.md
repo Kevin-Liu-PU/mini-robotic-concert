@@ -190,3 +190,58 @@ failures/errors, one Windows-only skip**, with nine isolation self-checks and
 zero forbidden attempts (`logs/responsive-parity-validation.json`). The launcher
 also passed shell syntax and stub-interpreter checks for missing-venv failure,
 project-relative configuration and quoted argument forwarding.
+
+## Next supervised parity trial: local application-view recording
+
+The user requested recording for the next test; no recording or camera stream
+was started while preparing this feature. The original live `--record NAME`
+mode records **unmirrored raw camera frames**, not the application interface.
+Keep that mode available unchanged. The new explicit `--record-view app` saves
+the same rendered canvas sent to the preview: camera view, hand/trajectory
+annotations, measured tempo and responsive hold-clock panel. It never captures
+the desktop, other windows, window chrome or audio and does not use an operating
+system screen-recording API or permission.
+
+When the supervised test is requested, from the repository root:
+
+```sh
+./launch-responsive-mac.command --seconds 180 --record mac-parity-01 --record-view app --record-seconds 45
+```
+
+Use a new run name for each attempt; existing directories are not overwritten.
+Wait for **Recording READY**, click the conductor preview, then press **C**.
+After the existing three-second countdown it records at most 45 seconds.
+Press **Q** at any point to end the preview and finalize the files; reaching
+45 seconds stops recording but leaves the bounded preview running. Mock and
+audio are disabled: do not add `--mock-cello` or `--audio-clock` for this parity
+trial. The original Space/Enter/R controls retain their existing clock behavior.
+
+Everything stays under ignored `recordings/mac-parity-01/`: `camera.avi`
+(the existing filename now contains the application view when selected),
+`video.frames.jsonl`, `diagnostics.jsonl`, `recording.issues.jsonl`, recording
+status/manifest and `session.json` with its numeric `.frames`, `.events` and
+`.clock` JSONL files. Nothing is uploaded or committed.
+
+Synchronization uses source sequence and `capture_monotonic_s` shared by the
+video mapping and diagnostics; `sample_time_s` is relative to session start.
+App-view diagnostics additionally include `rendered_monotonic_s` and the
+screen-clock snapshot used to draw that frame. Clock events include the same
+session clock origin. Thus a source observation, its rendered UI and predicted
+screen ticks remain distinguishable. The AVI has nominal 30 FPS: use the JSONL
+mapping for actual elapsed time, not the player's timeline.
+
+This is application-output recording **at processed camera-frame cadence**,
+not continuous desktop screen capture. Loops without a new processed source
+observation add no video frame; independent numeric clock logs still record
+state changes. Queue overload can drop frames and is reported explicitly.
+The synthetic integration test checks the live app branch with fake camera,
+model, GUI and writer: app mode records the final displayed canvas and clock
+snapshot without starting the raw-camera pump; default camera mode retains
+that pump. Existing countdown, duration, early-exit and writer-error tests remain
+applicable. Real Mac encoding throughput and the recorded view await the next
+supervised trial.
+
+Recording preparation validation: **537 hardware-isolated tests, zero failures/
+errors, one Windows-only skip**, nine isolation self-checks and zero forbidden
+attempts (`logs/app-recording-validation.json`). The three focused tests use
+mocked devices and an in-memory writer; they create no image/video file.

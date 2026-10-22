@@ -125,7 +125,10 @@ Normal video frames stay in RAM. Audio mode writes local numeric diagnostics to
 `logs/`. `--report PATH` writes numeric diagnostics. The existing optional
 `--record NAME` feature can save up to 45 seconds of silent camera video locally
 after C/countdown; it is disabled by default and was tested only with mocks or
-in-memory data for this version. No upload functionality is provided.
+in-memory data for this version. With `--record-view app`, it instead saves the
+rendered conductor view and UI at processed-frame cadence; no desktop capture.
+See [Mac recording instructions](CAMERA_SELECTION.md#next-supervised-parity-trial-local-application-view-recording).
+No upload functionality is provided.
 
 ## Limits and structure
 

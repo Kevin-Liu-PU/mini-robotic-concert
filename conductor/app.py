@@ -34,6 +34,19 @@ def render_mock_cello(canvas, mock):
     return np.vstack((canvas, strip))
 
 
+def record_rendered_frame(recording, canvas, diagnostic, rendered_at, clock_state=None):
+    """Record the app canvas for a processed source frame, with its source clock.
+
+    No desktop capture. Missing source observations produce no new video frame;
+    independent numeric clock logs still describe changes between observations.
+    """
+    if diagnostic is None:
+        return
+    recording.submit(diagnostic['sequence'], diagnostic['capture_monotonic_s'], canvas)
+    recording.add_diagnostic(dict(diagnostic, rendered_monotonic_s=rendered_at,
+                                  screen_clock=dict(clock_state) if clock_state else None))
+
+
 def adjust_line_for_key(session, key, now, screen_clock=None):
     """W/S move the line by 1% of image height, within a usable image region."""
     if key not in (ord("w"), ord("W"), ord("s"), ord("S")):
@@ -125,6 +138,8 @@ def parse_args(argv=None):
     parser.add_argument("--demo-screenshot", type=Path, help="Save one synthetic-only dashboard PNG on exit")
     parser.add_argument("--record", metavar="NAME", help="Enable local silent recording; press C in preview for a 3-second countdown, then at most 45 seconds")
     parser.add_argument("--record-seconds", type=float, default=45, help="Recording limit, >0 and <=45; only with --record")
+    parser.add_argument('--record-view', choices=('camera', 'app'), default='camera',
+                        help='With --record: raw camera (default) or rendered app view with UI; no desktop capture')
     args = parser.parse_args(argv)
     if args.camera_built_in and (args.camera is not None or args.camera_name):
         parser.error('--camera-built-in cannot be combined with --camera or --camera-name')
@@ -140,6 +155,8 @@ def parse_args(argv=None):
         parser.error("--record-seconds must be >0 and <=45")
     if not args.record and args.record_seconds!=45:
         parser.error("--record-seconds requires --record")
+    if not args.record and args.record_view != 'camera':
+        parser.error('--record-view app requires --record')
     if args.record and args.headless:
         parser.error("--record requires the preview window and an explicit C key to start")
     if args.demo_screenshot and not args.demo:
@@ -333,7 +350,8 @@ def main():
             from .recording_diagnostics import detector_state,diagnostic_record
             folder=Path(__file__).resolve().parents[1]/'recordings'/args.record
             recording=LocalRecording(folder,start,duration=args.record_seconds,
-                scope='synthetic_dashboard' if args.demo else 'source_camera_unmirrored',
+                scope='synthetic_dashboard' if args.demo else
+                      'rendered_app_processed_frames' if args.record_view == 'app' else 'source_camera_unmirrored',
                 mirror_display=cfg['mirror'],manual_start=True)
             if args.report is None:
                 args.report=folder/'session.json'
@@ -351,7 +369,7 @@ def main():
                 return 1
             mp, landmarker = load_hand_model(cfg)
             camera = Camera(cfg)
-            if recording:recording.start_source(camera.latest)
+            if recording and args.record_view == 'camera':recording.start_source(camera.latest)
         if not args.headless:
             cv2.namedWindow(window, cv2.WINDOW_NORMAL)
             cv2.resizeWindow(window, 1360, 800)
@@ -378,7 +396,7 @@ def main():
                 if loaded is not None:
                     mp, landmarker = loaded
                     camera = Camera(cfg)
-                    if recording:
+                    if recording and args.record_view == 'camera':
                         recording.start_source(camera.latest)
             recording_diagnostic=None
             recording_sequence=recording_timestamp=None
@@ -450,7 +468,8 @@ def main():
                             clock_fault = 'INFERENCE_RESULT_TOO_OLD'
                         if recording:
                             recording_diagnostic=diagnostic_record(session,hands_from_result(result),sequence,timestamp,start,before_state,accepted)
-                            recording.add_diagnostic(recording_diagnostic)
+                            if args.record_view == 'camera':
+                                recording.add_diagnostic(recording_diagnostic)
                         completed = time.perf_counter()
                         if frame_trace:
                             frame_trace.write(frame_record(session,start=start,timestamp=timestamp,
@@ -550,9 +569,9 @@ def main():
                 if mock_cello:
                     canvas = render_mock_cello(canvas, mock_cello)
             loop_marks.append(('render_finished',time.perf_counter()))
-            if recording and args.demo:
-                recording.submit(recording_sequence,recording_timestamp,canvas)
-                recording.add_diagnostic(recording_diagnostic)
+            if recording and (args.demo or args.record_view == 'app'):
+                record_rendered_frame(recording, canvas, recording_diagnostic,
+                                      time.perf_counter(), clock_state if screen_clock else None)
             if not args.headless:
                 cv2.imshow(window,canvas)
                 loop_marks.append(('present_finished',time.perf_counter()))
