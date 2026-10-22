@@ -75,14 +75,17 @@ the separate [Mac lock](requirements-macos-lock.txt). The full guarded runner
 executes 532 tests with zero failures/errors, one Windows-only skip, nine
 isolation self-checks and zero forbidden device attempts. The 25 mock/app-loop
 tests also run with site packages disabled. Independent review found and verified
-the detector-reset authorization fix described above. This does not validate
-native preview, MediaPipe model initialization, audio or physical execution.
+the detector-reset authorization fix described above. A subsequent user-approved
+live startup verified model load and built-in camera preview processing; see
+[camera validation](CAMERA_SELECTION.md) for the separate live evidence. Neither
+the synthetic suite nor startup alone establishes a user gesture-triggered bow,
+audio or physical execution.
 
 The published Windows baseline is `fc3791e99e4f8e039cc50a75c964423dc254829b`.
 Later uncommitted Windows changes have not been inspected. Existing configs
 default to DirectShow (`dshow`) and launchers are `.cmd`; the separate
 [Mac camera selection change](CAMERA_SELECTION.md) adds AVFoundation selection.
-The real camera/audio application has not been validated on Mac.
+The live startup check does not validate the audio application on Mac.
 The published conductor validation uses Python 3.10.11 and NumPy 1.26.4. Cello
 requires Python >=3.11,<3.13 and NumPy >=2: keep their environments separate.
 

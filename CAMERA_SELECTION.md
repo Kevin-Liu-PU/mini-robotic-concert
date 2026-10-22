@@ -88,13 +88,33 @@ were empty. Results are in local `logs/review-after-fix.json` and its `.log`.
 The focused reviewer also verified that internal detector resets invalidate
 armed and pending mock authorization, using a real-session synthetic regression.
 
-`system_profiler SPCameraDataType -json` returned an empty device list before
-setup; this does not establish that the machine has no camera. No real
-AVFoundation enumeration or capture was run after installation. The actual
-built-in identity, camera access, native preview and MediaPipe model
-initialization remain unverified. The model asset is not downloaded by pip;
-`models/hand_landmarker.task` is still absent. The existing `download_model.py`
-fetches it from Google's official bucket with a pinned SHA256 check; downloading
-or initializing that asset was outside this dependency-only validation.
-The standard-library demo is ready now. Keep the conductor and cello environments
-separate because their NumPy requirements are incompatible.
+The later user-approved live test downloaded the official model with the existing
+`download_model.py`; SHA256 matched
+`fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1`.
+The project-local ignored asset is `models/hand_landmarker.task`.
+
+Sandboxed metadata enumeration returned an empty list. Authorized native
+enumeration outside that sandbox identified **FaceTime HD Camera**, index 0,
+with `built_in=true`; an iPhone camera at index 1 was classified as external and
+not selected. This confirms index 0 only for the observed session, not as a
+portable built-in default. The first attempt requested macOS permission and
+read zero frames; it exited cleanly. Before the requested reopen, macOS reported
+camera authorization status 3 (authorized).
+
+The reopened 180-second run loaded the real MediaPipe model and processed live
+frames in the native preview loop. Numeric diagnostics reported fresh
+1920x1080 frames at approximately 30 capture FPS. These observations establish
+model load, device selection and preview processing; they alone do not establish
+a user gesture-to-mock trigger. Session diagnostics are local numeric-only
+`logs/live-mock-camera-2.json` and related JSONL traces. Recording/audio were
+disabled; no image/video files or robot connections were used. Keep conductor
+and cello environments separate because their NumPy requirements conflict.
+
+The session ended via Q after 152.29 seconds and reported
+`camera_closed_cleanly=true`. It processed 3,459 frames, including 428 with the
+selected hand, and detected 21 actual downward-contact beats. Mock counters were
+`started=0`, `completed=0`, `dropped=21`, `queued=0`; final state was DISARMED
+without a fault. Therefore **live hand detection is verified, live one-shot bow
+trigger/completion is not yet verified**. Aggregate diagnostics cannot establish
+whether A/B was never confirmed or authorization was cleared before a beat.
+Do not infer successful mock execution from detector beat counts alone.
