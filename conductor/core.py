@@ -98,6 +98,7 @@ class Conductor:
         self.diagnostic_events=deque(maxlen=256)
         self.diagnostic_counts=Counter()
         self.diagnostic_sequence=0
+        self.reset_generation = 0
         self.reset(reason="startup")
 
     def _note(self,event,reason,**values):
@@ -131,6 +132,7 @@ class Conductor:
         return True
 
     def _clear(self, status, reason="reset"):
+        self.reset_generation += 1
         self.raw = self.smoothed = None
         self.acquired_at = None
         self.armed = False

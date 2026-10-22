@@ -41,6 +41,8 @@ this milestone's validation.
 - **X / Space** stops the mock and cancels its deadline. Hand loss, stale source,
   MAIN identity changes, line edits, Enter, reset and exit clear authorization.
 - **Enter** retains its existing clock-resume meaning and never arms the mock.
+- **A then B** means the literal A and B keyboard keys. MAIN track identities
+  remain selected with **1 / 2**, so these controls do not overlap.
 - **R** explicitly resets a latched mock fault to DISARMED. A new A/B sequence
   and a new post-arm gesture are still required.
 
@@ -58,8 +60,11 @@ could act on a later arm. Mock start/completion exceptions and invalid monotonic
 time latch FAULT. App exceptions also latch FAULT.
 
 App authorization requires a fresh observed MAIN source. A fresh frame after a
-processing gap cannot revive an earlier authorization. All state and controls
-run on the same application thread. Future concurrency would require a separate
+processing gap cannot revive an earlier authorization. The app also tracks the
+detector's reset generation: internal resets such as a position
+jump or tempo expiry clear both armed and pending A/B authorization even when
+the MAIN identity stays the same and diagnostics have already been drained.
+All state and controls run on the same application thread. Future concurrency would require a separate
 generation/cancellation design; this implementation does not assert that one
 already exists.
 

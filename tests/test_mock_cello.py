@@ -9,6 +9,8 @@ from conductor.core import Beat
 from conductor.app import parse_args, update_mock_cello
 from conductor.mock_cello import MockCello, MockCelloControls
 from conductor.mock_cello_demo import run_demo
+from conductor.multitrack import ConductorSession
+from conductor.synthetic import demo_hand
 
 
 class MockBowTests(unittest.TestCase):
@@ -197,6 +199,49 @@ class AppSeamTests(unittest.TestCase):
                          ['DISARMED', 'ARMED', 'BUSY', 'DISARMED'])
         self.assertEqual((result['final']['started'], result['final']['completed']), (1, 1))
         self.assertGreater(result['final']['dropped'], 0)
+
+    def test_internal_detector_reset_clears_arm_and_pending_confirmation(self):
+        for reset_reason in ('position_jump', 'tempo_expired'):
+            for armed in (True, False):
+                with self.subTest(reset_reason=reset_reason, armed=armed):
+                    session = ConductorSession()
+                    mock = MockCelloControls()
+
+                    def step(t, tip_y):
+                        hand = demo_hand(.25, .4)  # Stable wrist/MAIN identity.
+                        hand.landmarks[8].y = tip_y
+                        event = session.update([hand], t)
+                        session.engine.expire(t)
+                        # Reset detection must not depend on an undrained journal.
+                        session.engine.drain_events()
+                        update_mock_cello(mock, session, (t, .25, tip_y), event, t)
+                        return event
+
+                    for i in range(31):
+                        step(i/60, .4)
+                    token = session.primary_token
+                    mock.key(ord('a'), .5)
+                    if armed:
+                        self.assertTrue(mock.key(ord('b'), .5))
+                    if reset_reason == 'position_jump':
+                        step(31/60, .95)
+                    else:
+                        # Inject old tempo evidence, then exercise real expiry.
+                        session.engine.last_evidence_at = -10
+                        step(31/60, .4)
+                    self.assertEqual(session.primary_token, token)
+                    self.assertGreater(session.engine.diagnostic_counts['reset:' + reset_reason], 0)
+                    self.assertEqual(mock.bow.state, 'DISARMED')
+                    self.assertFalse(mock.snapshot()['arm_confirmation_pending'])
+                    # Reacquisition and later actual detector beats need new A/B.
+                    events = []
+                    for i in range(32, 241):
+                        t = i/60
+                        event = step(t, .48 + .14*math.cos(2*math.pi*t))
+                        if event is not None:
+                            events.append(event)
+                    self.assertTrue(events)
+                    self.assertEqual(mock.bow.started, 0)
 
 
 if __name__ == '__main__':

@@ -20,7 +20,8 @@ def update_mock_cello(mock, session, sample, event, now):
     """Only the observed session Beat enters the mock, never a clock tick."""
     if mock is not None:
         mock.step(now, sample=sample, event=event,
-                  source_token=session.primary_token if session.beat_anchor else None)
+                  source_token=(session.primary_token, session.engine.reset_generation)
+                  if session.beat_anchor else None)
 
 
 def render_mock_cello(canvas, mock):
