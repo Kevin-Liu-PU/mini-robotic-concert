@@ -146,3 +146,9 @@ does not establish real-world conducting accuracy, speaker latency or acoustic
 synchronization. Live camera and audible-output behavior have not been validated
 for this published version. See [VALIDATION.md](VALIDATION.md) for the validation
 scope. Physical instrument integration remains future work.
+
+## Mock cello milestone (opt-in)
+
+For a standard-library-only Mac/Windows proof with no devices, run
+`python3 -B -S -m conductor.mock_cello_demo` from this directory.
+See [MOCK_CELLO.md](MOCK_CELLO.md) for single-bow controls, tests and limitations.

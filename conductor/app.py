@@ -16,6 +16,23 @@ from .synthetic import demo_hand
 from .numeric_trace import NumericTrace, frame_record, result_counts
 
 
+def update_mock_cello(mock, session, sample, event, now):
+    """Only the observed session Beat enters the mock, never a clock tick."""
+    if mock is not None:
+        mock.step(now, sample=sample, event=event,
+                  source_token=session.primary_token if session.beat_anchor else None)
+
+
+def render_mock_cello(canvas, mock):
+    """Append a labelled mock strip without covering the existing dashboard."""
+    import cv2
+    import numpy as np
+    strip = np.full((44, canvas.shape[1], 3), (30, 30, 30), np.uint8)
+    cv2.putText(strip, mock.label(), (16, 29), cv2.FONT_HERSHEY_SIMPLEX,
+                .5, (90, 220, 255), 1, cv2.LINE_AA)
+    return np.vstack((canvas, strip))
+
+
 def adjust_line_for_key(session, key, now, screen_clock=None):
     """W/S move the line by 1% of image height, within a usable image region."""
     if key not in (ord("w"), ord("W"), ord("s"), ord("S")):
@@ -91,6 +108,8 @@ def parse_args(argv=None):
     parser.add_argument('--num-hands',type=int,choices=(1,2),
                         help='Model capacity: 1 requires only one physical hand in view; 2 enables A/B tracking')
     parser.add_argument("--demo", action="store_true", help="Synthetic 60/120 BPM, then pause, repeat; no camera/model")
+    parser.add_argument('--mock-cello', action='store_true',
+                        help='MOCK only: A then B arms one observed beat; X/Space stops; no robot connection')
     parser.add_argument('--hold-clock', action='store_true',
                         help='Opt-in screen clock: hold BPM on hand loss; Space stops, Enter resumes saved BPM or acquires fresh')
     parser.add_argument('--audio-clock', action='store_true',
@@ -104,6 +123,8 @@ def parse_args(argv=None):
     parser.add_argument("--record", metavar="NAME", help="Enable local silent recording; press C in preview for a 3-second countdown, then at most 45 seconds")
     parser.add_argument("--record-seconds", type=float, default=45, help="Recording limit, >0 and <=45; only with --record")
     args = parser.parse_args(argv)
+    if args.mock_cello and (args.headless or args.list_cameras):
+        parser.error('--mock-cello requires interactive preview; for no-device CLI use python -m conductor.mock_cello_demo')
     if args.audio_clock and (not args.hold_clock or args.headless or args.list_cameras):
         parser.error('--audio-clock requires --hold-clock and an interactive preview, without --list-cameras')
     if args.audio_config and not args.audio_clock:
@@ -148,6 +169,10 @@ def create_screen_clock(cfg, audio_config=None):
 
 def main():
     args = parse_args()
+    mock_cello = None
+    if args.mock_cello:
+        from .mock_cello import MockCelloControls
+        mock_cello = MockCelloControls()
     cfg = load_config(args.config)
     audio_config = None
     if args.audio_clock:
@@ -288,6 +313,7 @@ def main():
                 "screen_clock_policy":screen_clock.snapshot(now).get('follow_policy',
                     'hold_last_tempo_manual_resume_v2') if screen_clock else None,
                 "audio_clock":audio_state(),
+                "mock_cello":mock_cello.snapshot() if mock_cello else None,
                 "preview_validation":preview_validation}
     def save_report(value,final=False):
         return publish_report(args.report,value,final=final)
@@ -451,6 +477,7 @@ def main():
                     bpm_values.append(engine.bpm)
             now = time.perf_counter_ns()/1e9
             engine.expire(now)
+            update_mock_cello(mock_cello, session, sample, event, now)
             save_events()
             metronome.update(now,engine.output_bpm)
             loop_marks.append(('event_journal_finished',time.perf_counter()))
@@ -510,6 +537,8 @@ def main():
                     canvas = render_clock(canvas, clock_state, now, recording_enabled=recording is not None,
                                           audio_state=audio_state() if args.audio_clock else None,
                                           gesture_state=engine.feedback(now))
+                if mock_cello:
+                    canvas = render_mock_cello(canvas, mock_cello)
             loop_marks.append(('render_finished',time.perf_counter()))
             if recording and args.demo:
                 recording.submit(recording_sequence,recording_timestamp,canvas)
@@ -519,6 +548,8 @@ def main():
                 loop_marks.append(('present_finished',time.perf_counter()))
                 key = cv2.waitKey(1)&0xFF
                 loop_marks.append(('key_poll_finished',time.perf_counter()))
+                if mock_cello:
+                    mock_cello.key(key, time.perf_counter())
                 if key in (27,ord("q"),ord("Q")):
                     exit_reason = "quit_key"
                     break
@@ -561,9 +592,13 @@ def main():
         if screen_clock:
             screen_clock.stop(time.perf_counter(), 'APPLICATION_EXIT')
             save_clock_events()
+        if mock_cello:
+            mock_cello.stop('APPLICATION_EXIT')
         report = snapshot(False,exit_reason)
         save_events()
     except Exception as exc:
+        if mock_cello:
+            mock_cello.bow.fail(f'APPLICATION_ERROR: {type(exc).__name__}: {exc}')
         if screen_clock:
             screen_clock.fail(time.perf_counter(), 'APPLICATION_ERROR')
             print(f'SCREEN CLOCK STOPPED: {type(exc).__name__}: {exc}', file=sys.stderr, flush=True)
@@ -571,6 +606,9 @@ def main():
             save_report(snapshot(False, 'application_error'), final=True)
         raise
     finally:
+        if mock_cello:
+            mock_cello.stop('APPLICATION_EXIT')
+            report['mock_cello'] = mock_cello.snapshot()
         if audio_output:
             report['audio_closed_cleanly'] = audio_output.close()
             if audio_trace:
