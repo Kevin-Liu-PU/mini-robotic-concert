@@ -2,7 +2,8 @@
 
 Camera selection is independent of the MOCK cello. Listing devices reads
 metadata only; starting the live app opens the selected stream. Recording and
-audio remain opt-in. The current automated validation has opened no stream.
+audio remain opt-in. Automated tests open no streams; the separately approved
+live trial and its limitations are recorded below.
 
 The project-local `.venv` is prepared on this Mac. From the repository root:
 
@@ -10,12 +11,13 @@ The project-local `.venv` is prepared on this Mac. From the repository root:
 # List native names, indices and built_in classification; no stream is opened.
 .venv/bin/python -B -m conductor.app --list-cameras --backend avfoundation
 
-# Later live preview, after the model asset is available: require built-in.
-.venv/bin/python -B -m conductor.app --backend avfoundation --camera-built-in --num-hands 1 --mock-cello
+# Responsive screen-only preview, equivalent to Windows launch-responsive.cmd.
+# Requires the built-in camera; optional mock remains explicitly enabled here.
+./launch-responsive-mac.command --mock-cello --seconds 180 --report logs/live-responsive-mock.json
 
 # Alternatively select a unique name shown by --list-cameras, or its index.
-.venv/bin/python -B -m conductor.app --backend avfoundation --camera-name "EXACT NAME FROM LIST" --mock-cello
-.venv/bin/python -B -m conductor.app --backend avfoundation --camera 1 --mock-cello
+.venv/bin/python -B -m conductor.app --config config-responsive.json --hold-clock --backend avfoundation --camera-name "EXACT NAME FROM LIST" --mock-cello
+.venv/bin/python -B -m conductor.app --config config-responsive.json --hold-clock --backend avfoundation --camera 1 --mock-cello
 ```
 
 The name and index examples must be replaced with verified listing values.
@@ -118,3 +120,67 @@ without a fault. Therefore **live hand detection is verified, live one-shot bow
 trigger/completion is not yet verified**. Aggregate diagnostics cannot establish
 whether A/B was never confirmed or authorization was cleared before a beat.
 Do not infer successful mock execution from detector beat counts alone.
+
+## Windows/Mac behavior audit after that trial
+
+The trial used this command (with project-local cache environment variables):
+
+```sh
+.venv/bin/python -B -m conductor.app --backend avfoundation --camera-built-in --num-hands 1 --mock-cello --seconds 180 --report logs/live-mock-camera-2.json
+```
+
+It omitted both `--config config-responsive.json` and `--hold-clock`. Therefore
+it loaded `config.json`, with the CLI overriding `num_hands` to 1. The report
+confirms `screen_clock: null`. This was **not the Windows recommended responsive
+screen behavior**. The published Windows launchers select:
+
+| Launcher | App arguments before user overrides |
+| --- | --- |
+| `launch-responsive.cmd` | `--config config-responsive.json --hold-clock` |
+| `launch-hold-single-hand.cmd` | `--config config-screen-hold.json --hold-clock` |
+| `launch-audio-single-hand.cmd` | `--config config-responsive.json --hold-clock --audio-clock --audio-config config-audio.json` |
+| `launch-single-hand.cmd` | `--config config-single-hand.json` |
+
+The base detector requires 3 valid intervals for its robust BPM estimate; this
+is not three gestures for each beat event. It drops stale tempo evidence. The
+responsive screen clock starts from 2 reliable contacts (1 interval), follows
+each valid interval and keeps the last tempo during hand loss while source
+health remains good. These are separate outputs. `launch-responsive-mac.command`
+now selects that exact responsive profile and hold clock with AVFoundation and
+verified built-in selection. It does not enable audio or recording. Mock remains
+one-shot and accepts only observed beats; held screen predictions cannot drive
+it. Space stops both; Enter resumes only the screen clock; A then B authorizes
+one mock bow; R resets; Q exits. MAIN track selection is still numeric 1/2.
+
+The numeric trace also separates model visibility from transport failures:
+all 3,459 results were accepted, result ages were 22.3–66.7 ms (median 40.5 ms),
+sample timestamps increased, and no processed-frame gap exceeded 250 ms.
+The model returned no hand in 2,998 frames and one hand in 461. Most no-hand
+frames preceded the first model hand detection: no hand was reported from
+2.01–128.48 seconds, followed by continuous model hand candidates from
+128.54–146.59 seconds, then short losses and final absence. A returned hand
+candidate does not guarantee a valid selected index fingertip. The session
+recorded 6 invalid-tip resets and 5 long/discontinuous reacquisitions.
+
+Detection confidence thresholds (all 0.6), VIDEO model mode, 640-pixel inference
+width, mirroring, detector and association settings match the responsive profile.
+The actual Mac capture negotiated 1920x1080 at about 30 FPS; processing was about
+23 FPS. Camera transport timestamps and inference admission are unchanged from
+the published code. The branch changes add camera selection/native format and
+mock observation, not a gate on detection, rendering or the screen clock.
+The original Windows live camera negotiation and current physical hand placement
+are unavailable; these logs cannot establish why the model missed a hand or tip.
+Lighting, framing/field of view and gesture visibility remain hypotheses, not
+diagnosed causes. No confidence or tracking threshold was relaxed.
+
+The corrected launcher has **not yet been live-tested**. A fake-time app-loop
+regression compares the responsive profile with mock enabled/disabled through
+the existing synthetic hand-loss interval: the entire screen-clock state stream
+and detector diagnostics match, held predictions continue, and mock executes
+only its explicitly authorized single bow. No camera was reopened for this audit.
+
+After this correction the full hardware-isolated suite passed **534 tests, zero
+failures/errors, one Windows-only skip**, with nine isolation self-checks and
+zero forbidden attempts (`logs/responsive-parity-validation.json`). The launcher
+also passed shell syntax and stub-interpreter checks for missing-venv failure,
+project-relative configuration and quoted argument forwarding.
