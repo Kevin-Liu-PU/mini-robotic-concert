@@ -154,7 +154,7 @@ For a standard-library-only Mac/Windows proof with no devices, run
 See [MOCK_CELLO.md](MOCK_CELLO.md) for single-bow controls, tests and limitations.
 
 Mac camera selection supports `--camera-built-in`, `--camera-name` and `--camera`
-with `--backend avfoundation`. `./launch-responsive-mac.command --mock-cello`
+with `--backend avfoundation`. `./launch-responsive-mac.command`
 selects the same responsive screen/hold profile as the recommended Windows
-launcher, with built-in camera. See [CAMERA_SELECTION.md](CAMERA_SELECTION.md)
+launcher, with built-in camera and mock/audio/recording disabled. See [CAMERA_SELECTION.md](CAMERA_SELECTION.md)
 for metadata-only listing, launch commands and current Mac validation limits.

@@ -11,16 +11,20 @@ The project-local `.venv` is prepared on this Mac. From the repository root:
 # List native names, indices and built_in classification; no stream is opened.
 .venv/bin/python -B -m conductor.app --list-cameras --backend avfoundation
 
-# Responsive screen-only preview, equivalent to Windows launch-responsive.cmd.
-# Requires the built-in camera; optional mock remains explicitly enabled here.
-./launch-responsive-mac.command --mock-cello --seconds 180 --report logs/live-responsive-mock.json
+# First validate the original responsive screen/hold behavior on Mac.
+# Built-in camera only; mock, audio and recording are disabled.
+./launch-responsive-mac.command --seconds 180 --report logs/live-responsive-parity.json
 
 # Alternatively select a unique name shown by --list-cameras, or its index.
-.venv/bin/python -B -m conductor.app --config config-responsive.json --hold-clock --backend avfoundation --camera-name "EXACT NAME FROM LIST" --mock-cello
-.venv/bin/python -B -m conductor.app --config config-responsive.json --hold-clock --backend avfoundation --camera 1 --mock-cello
+.venv/bin/python -B -m conductor.app --config config-responsive.json --hold-clock --backend avfoundation --camera-name "EXACT NAME FROM LIST"
+.venv/bin/python -B -m conductor.app --config config-responsive.json --hold-clock --backend avfoundation --camera 1
 ```
 
 The name and index examples must be replaced with verified listing values.
+First compare the original conductor perception, display and held tempo with
+the Windows behavior. Only after that comparison, opt into the separate
+downstream mock with `--mock-cello` for its own supervised trial. The launcher
+itself never enables mock, audio or recording.
 Index 0 is never assumed to mean built-in. `--camera-built-in` uses AVFoundation
 device type; a misleading name on a USB camera cannot qualify it. Zero or
 multiple built-in devices are an error. Missing/ambiguous names and unknown Mac
@@ -178,6 +182,8 @@ regression compares the responsive profile with mock enabled/disabled through
 the existing synthetic hand-loss interval: the entire screen-clock state stream
 and detector diagnostics match, held predictions continue, and mock executes
 only its explicitly authorized single bow. No camera was reopened for this audit.
+The next live parity trial intentionally omits `--mock-cello`; it validates the
+original conductor before exercising any downstream executor.
 
 After this correction the full hardware-isolated suite passed **534 tests, zero
 failures/errors, one Windows-only skip**, with nine isolation self-checks and
