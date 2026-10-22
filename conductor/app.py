@@ -34,7 +34,7 @@ def render_mock_cello(canvas, mock):
     return np.vstack((canvas, strip))
 
 
-def record_rendered_frame(recording, canvas, diagnostic, rendered_at, clock_state=None):
+def record_rendered_frame(recording, canvas, diagnostic, rendered_at, clock_state=None, virtual_state=None):
     """Record the app canvas for a processed source frame, with its source clock.
 
     No desktop capture. Missing source observations produce no new video frame;
@@ -43,8 +43,11 @@ def record_rendered_frame(recording, canvas, diagnostic, rendered_at, clock_stat
     if diagnostic is None:
         return
     recording.submit(diagnostic['sequence'], diagnostic['capture_monotonic_s'], canvas)
-    recording.add_diagnostic(dict(diagnostic, rendered_monotonic_s=rendered_at,
-                                  screen_clock=dict(clock_state) if clock_state else None))
+    row = dict(diagnostic, rendered_monotonic_s=rendered_at,
+               screen_clock=dict(clock_state) if clock_state else None)
+    if virtual_state is not None:
+        row['virtual_bow'] = virtual_state
+    recording.add_diagnostic(row)
 
 
 def adjust_line_for_key(session, key, now, screen_clock=None):
@@ -126,6 +129,10 @@ def parse_args(argv=None):
     parser.add_argument("--demo", action="store_true", help="Synthetic 60/120 BPM, then pause, repeat; no camera/model")
     parser.add_argument('--mock-cello', action='store_true',
                         help='MOCK only: A then B arms one observed beat; X/Space stops; no robot connection')
+    parser.add_argument('--virtual-bow', action='store_true',
+                        help='Separate two-hand continuous virtual-bow display; no robot or beat-clock control')
+    parser.add_argument('--virtual-bow-config', type=Path, help='Optional JSON mapping settings; requires --virtual-bow')
+    parser.add_argument('--invert-bow-direction', action='store_true', help='In virtual-bow mode map upward to left, downward to right')
     parser.add_argument('--hold-clock', action='store_true',
                         help='Opt-in screen clock: hold BPM on hand loss; Space stops, Enter resumes saved BPM or acquires fresh')
     parser.add_argument('--audio-clock', action='store_true',
@@ -141,6 +148,10 @@ def parse_args(argv=None):
     parser.add_argument('--record-view', choices=('camera', 'app'), default='camera',
                         help='With --record: raw camera (default) or rendered app view with UI; no desktop capture')
     args = parser.parse_args(argv)
+    if (args.virtual_bow_config or args.invert_bow_direction) and not args.virtual_bow:
+        parser.error('Virtual bow settings require --virtual-bow')
+    if args.virtual_bow and (args.mock_cello or args.hold_clock or args.audio_clock or args.list_cameras or args.num_hands == 1):
+        parser.error('--virtual-bow requires two hands and is separate from mock-cello, hold/audio clocks and camera listing')
     if args.camera_built_in and (args.camera is not None or args.camera_name):
         parser.error('--camera-built-in cannot be combined with --camera or --camera-name')
     if args.mock_cello and (args.headless or args.list_cameras):
@@ -196,6 +207,15 @@ def main():
         from .mock_cello import MockCelloControls
         mock_cello = MockCelloControls()
     cfg = load_config(args.config)
+    virtual_bow = None
+    if args.virtual_bow:
+        from .virtual_bow import VirtualBow, VirtualBowConfig, update_from_session, demo_hands as virtual_demo_hands
+        from .virtual_bow_display import render_virtual_bow
+        mapping = json.loads(args.virtual_bow_config.read_text(encoding='utf-8-sig')) if args.virtual_bow_config else {}
+        if args.invert_bow_direction:
+            mapping['invert_direction'] = True
+        virtual_bow = VirtualBow(VirtualBowConfig(**mapping))
+        cfg['num_hands'] = 2
     audio_config = None
     if args.audio_clock:
         from .audio_clock import AudioConfig
@@ -243,6 +263,8 @@ def main():
     recording = None
     frame_trace = None
     window = "Human Conductor - experimental audio clock" if args.audio_clock else "Human Conductor - stages 1 and 2"
+    if virtual_bow:
+        window = 'Human Conductor - virtual bow (NO ROBOT)'
     beats = deque()
     process_times = deque(maxlen=180)
     inference_times = deque(maxlen=600)
@@ -341,6 +363,7 @@ def main():
                     'hold_last_tempo_manual_resume_v2') if screen_clock else None,
                 "audio_clock":audio_state(),
                 "mock_cello":mock_cello.snapshot() if mock_cello else None,
+                "virtual_bow":virtual_bow.snapshot() if virtual_bow else None,
                 "preview_validation":preview_validation}
     def save_report(value,final=False):
         return publish_report(args.report,value,final=final)
@@ -385,6 +408,7 @@ def main():
                 break
             sample = None
             event = None
+            fresh_virtual_result = None
             clock_fault = None
             if model_startup:
                 loaded, load_error = model_startup.take()
@@ -413,8 +437,11 @@ def main():
                 # tracks still supply only one tempo stream. No camera is used.
                 if cfg['num_hands']==2 and 3 < segment < 24:
                     demo_hands.append(demo_hand(.75,line-.14+.14*math.cos(2*math.pi*(phase+.5)),"Left"))
+                if virtual_bow:
+                    demo_hands = virtual_demo_hands(elapsed)
                 before_state=detector_state(engine) if recording else None
                 event = session.update(demo_hands,now)
+                fresh_virtual_result = True
                 if recording:
                     recording_sequence,recording_timestamp=processed+1,now
                     recording_diagnostic=diagnostic_record(session,demo_hands,recording_sequence,now,start,before_state)
@@ -464,6 +491,7 @@ def main():
                         inference_times.append(inference_ms)
                         before_state=detector_state(engine) if recording else None
                         accepted,event = session.consume_result(result,timestamp,inference_finished)
+                        fresh_virtual_result = accepted
                         if screen_clock and screen_clock.first_valid_frame_at is not None and not accepted and session.last_result_status == 'inference_result_too_old':
                             clock_fault = 'INFERENCE_RESULT_TOO_OLD'
                         if recording:
@@ -486,6 +514,7 @@ def main():
                             sample = (timestamp,anchor[0] if anchor else None,anchor[1] if anchor else None)
                 if (not packet or now-packet[1] > engine.config.max_frame_gap_s):
                     session.update([],now,missing_reason="stale_camera_frame")
+                    fresh_virtual_result = True
                     hand = None
                     shown_frame = None
             loop_marks.append(('source_and_frame_journal_finished',time.perf_counter()))
@@ -507,6 +536,8 @@ def main():
             now = time.perf_counter_ns()/1e9
             engine.expire(now)
             update_mock_cello(mock_cello, session, sample, event, now)
+            if virtual_bow:
+                update_from_session(virtual_bow, session, fresh_virtual_result, now)
             save_events()
             metronome.update(now,engine.output_bpm)
             loop_marks.append(('event_journal_finished',time.perf_counter()))
@@ -560,8 +591,11 @@ def main():
                 recording_source_ready, info['recording_wait_message'] = recording_gate(clock_state, recording_source_ready)
             info['recording_source_ready']=recording_source_ready
             if not args.headless or args.demo_screenshot or (recording and args.demo):
-                canvas = render(shown_frame,engine,metronome,now,session.trajectories,beats,cfg,info,
-                                tracks=session.tracker.tracks)
+                if virtual_bow:
+                    canvas = render_virtual_bow(shown_frame, session, virtual_bow, now, cfg, info)
+                else:
+                    canvas = render(shown_frame,engine,metronome,now,session.trajectories,beats,cfg,info,
+                                    tracks=session.tracker.tracks)
                 if screen_clock:
                     canvas = render_clock(canvas, clock_state, now, recording_enabled=recording is not None,
                                           audio_state=audio_state() if args.audio_clock else None,
@@ -571,7 +605,8 @@ def main():
             loop_marks.append(('render_finished',time.perf_counter()))
             if recording and (args.demo or args.record_view == 'app'):
                 record_rendered_frame(recording, canvas, recording_diagnostic,
-                                      time.perf_counter(), clock_state if screen_clock else None)
+                                      time.perf_counter(), clock_state if screen_clock else None,
+                                      virtual_bow.snapshot() if virtual_bow else None)
             if not args.headless:
                 cv2.imshow(window,canvas)
                 loop_marks.append(('present_finished',time.perf_counter()))
@@ -579,6 +614,8 @@ def main():
                 loop_marks.append(('key_poll_finished',time.perf_counter()))
                 if mock_cello:
                     mock_cello.key(key, time.perf_counter())
+                if virtual_bow:
+                    virtual_bow.key(key)
                 if key in (27,ord("q"),ord("Q")):
                     exit_reason = "quit_key"
                     break
@@ -623,9 +660,13 @@ def main():
             save_clock_events()
         if mock_cello:
             mock_cello.stop('APPLICATION_EXIT')
+        if virtual_bow:
+            virtual_bow.stop('APPLICATION_EXIT', disable=True)
         report = snapshot(False,exit_reason)
         save_events()
     except Exception as exc:
+        if virtual_bow:
+            virtual_bow.stop('APPLICATION_ERROR', disable=True)
         if mock_cello:
             mock_cello.bow.fail(f'APPLICATION_ERROR: {type(exc).__name__}: {exc}')
         if screen_clock:
@@ -635,6 +676,9 @@ def main():
             save_report(snapshot(False, 'application_error'), final=True)
         raise
     finally:
+        if virtual_bow:
+            virtual_bow.stop('APPLICATION_EXIT' if exit_reason != 'unknown' else 'APPLICATION_ERROR', disable=True)
+            report['virtual_bow'] = virtual_bow.snapshot()
         if mock_cello:
             mock_cello.stop('APPLICATION_EXIT')
             report['mock_cello'] = mock_cello.snapshot()

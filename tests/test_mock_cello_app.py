@@ -29,7 +29,7 @@ class FakeTime:
 
 class AppLoopTests(unittest.TestCase):
     def run_app(self, *, enabled=True, hold=False, keys=None, render_error=False,
-                config=None, seconds=4, clock_states=None):
+                config=None, seconds=4, clock_states=None, virtual=False, virtual_states=None):
         clock = FakeTime()
         mock = MockCelloControls()
         keys = dict(keys or {31: ord('a'), 32: ord('b')})
@@ -48,6 +48,11 @@ class AppLoopTests(unittest.TestCase):
                 clock_states.append(dict(state))
             return canvas
 
+        def render_virtual(frame, session, bow, now, cfg, info):
+            if virtual_states is not None:
+                virtual_states.append(dict(bow.snapshot(), time_s=now))
+            return 'virtual bow canvas'
+
         cv2 = SimpleNamespace(WINDOW_NORMAL=0, WND_PROP_VISIBLE=0,
             namedWindow=Mock(), resizeWindow=Mock(), imshow=Mock(), waitKey=lambda _: key(),
             getWindowProperty=lambda *_: 1, destroyAllWindows=Mock(),
@@ -56,7 +61,8 @@ class AppLoopTests(unittest.TestCase):
             sounddevice=SimpleNamespace(OutputStream=forbidden, InputStream=forbidden),
             **{'conductor.capture': SimpleNamespace(Camera=forbidden, rate=lambda values: len(values)),
                'conductor.display': SimpleNamespace(render=Mock(return_value='fake canvas')),
-               'conductor.screen_display': SimpleNamespace(render_clock=render_clock)})
+               'conductor.screen_display': SimpleNamespace(render_clock=render_clock),
+               'conductor.virtual_bow_display': SimpleNamespace(render_virtual_bow=render_virtual)})
         output = io.StringIO()
         with tempfile.TemporaryDirectory() as directory, contextlib.ExitStack() as stack:
             args = ['conductor.app', '--demo', '--seconds', str(seconds), '--report', str(Path(directory)/'session.json')]
@@ -64,6 +70,8 @@ class AppLoopTests(unittest.TestCase):
                 args.extend(['--config', str(Path(__file__).resolve().parents[1]/config)])
             if enabled:
                 args.append('--mock-cello')
+            if virtual:
+                args.append('--virtual-bow')
             if hold:
                 args.append('--hold-clock')
             stack.enter_context(patch.dict(sys.modules, modules))

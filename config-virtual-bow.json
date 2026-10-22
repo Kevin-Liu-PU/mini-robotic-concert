@@ -1,0 +1,11 @@
+{
+  "speed_gain": 0.6,
+  "max_speed": 0.5,
+  "vertical_deadband": 0.025,
+  "smoothing_tau_s": 0.06,
+  "max_age_s": 0.2,
+  "max_gap_s": 0.2,
+  "max_hand_speed": 4.0,
+  "max_speed_ratio": 3.0,
+  "invert_direction": false
+}

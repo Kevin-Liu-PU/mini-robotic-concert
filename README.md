@@ -161,3 +161,13 @@ with `--backend avfoundation`. `./launch-responsive-mac.command`
 selects the same responsive screen/hold profile as the recommended Windows
 launcher, with built-in camera and mock/audio/recording disabled. See [CAMERA_SELECTION.md](CAMERA_SELECTION.md)
 for metadata-only listing, launch commands and current Mac validation limits.
+
+## Two-hand virtual bow (opt-in)
+
+Run `.venv/bin/python -B -m conductor.app --virtual-bow --demo --seconds 30`
+for the synthetic two-hand display without a camera or model. Slow upward
+motion moves a virtual bow rightward; faster downward motion reverses it and
+increases speed. Both hand trajectories and measured speeds are shown.
+The original beat/BPM modes remain the default. See [VIRTUAL_BOW.md](VIRTUAL_BOW.md)
+for the configurable mapping, stop conditions, Mac launch and later local
+app-view recording. This mode never connects to a robot.
