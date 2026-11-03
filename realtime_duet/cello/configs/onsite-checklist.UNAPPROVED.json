@@ -1,0 +1,26 @@
+{
+  "_notice": "UNAPPROVED TEMPLATE. Human onsite evidence required. These declarations supplement automated checks; they do not prove safety by themselves.",
+  "status": "UNAPPROVED",
+  "operator": null,
+  "session_id": null,
+  "mode": null,
+  "checks": {
+    "calibration_and_installation": {
+      "verified": false
+    },
+    "mode_and_operating_range": {
+      "verified": false
+    },
+    "setup_force_and_control_ownership": {
+      "verified": false
+    },
+    "attendance_stop_and_authorization": {
+      "verified": false
+    },
+    "applicable_site_rules": {
+      "verified": false
+    }
+  },
+  "site_rules": null,
+  "notes": ""
+}

@@ -1,5 +1,11 @@
 # Mini Robotic Concert
 
+**Mac conductor + mock cello integration:** use the isolated
+[realtime_duet project](realtime_duet/README.md) on branch
+`feat/conductor-cello-realtime-mac`. It includes camera calibration, the
+phase/tempo clock and a mock cello receiver. The instructions below describe
+the original prototype; its files and behavior are preserved.
+
 A local Python prototype that turns visible hand gestures into detected beats,
 tempo estimates and an optional experimental audio metronome. It uses pretrained
 MediaPipe hand landmarks and OpenCV. Connecting a human conductor to a robotic
