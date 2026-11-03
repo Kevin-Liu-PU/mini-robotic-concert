@@ -1,6 +1,6 @@
 """PTS-paced video runner; camera source is explicit opt-in and unvalidated.
 
-Video tests never open a camera. No audio or robot APIs exist in this module.
+Video tests never open a camera. Optional beat audio is output-only; no robot APIs.
 """
 import argparse
 from collections import deque
@@ -19,6 +19,7 @@ import sys
 from . import __version__
 from .clock import MusicalClock
 from .count_in import CountIn
+from .body_reference import AutomaticVisualDetector, tracking_timeout, pose_side_for_hand
 from .protocol import WireEncoder
 from .transport import Publisher
 from .vision import VisualDetector, result_record
@@ -30,7 +31,7 @@ def frame_log_record(metric, detection, landmarks, camera=False):
     if camera:
         # Camera trial keeps performance/events, not pixels, landmark vectors,
         # hand-shape measurements or body/fingertip positions.
-        return dict(metric, detection={key:detection[key] for key in ('prepare','stop','visible','association') if key in detection},
+        return dict(metric, detection={key:detection[key] for key in ('prepare','stop','visible','association','reference_state','reference_reason','reference_quality','reference_frame_gap_s','reference_gap_resumed','stop_checks','stop_approach_age_s','stop_confirmation_s','tracking_ready','wrist_visibility','detected_hands','selected_side','locked_side','hand_mesh_age_ms','beat_stage','beat_rejection','candidate_kind','candidate_stamp','candidate_frame','candidate_feature','candidate_confirmation_ms','downstroke_shoulder_units','rebound_shoulder_units') if key in detection},
                     camera_landmarks_saved=False)
     return dict(metric, detection=detection, landmarks=landmarks)
 
@@ -80,6 +81,9 @@ class VideoRun:
         self.epoch = None
         self.decoded = self.processed = self.command_drops = 0
         self.latest_visible = None
+        self.latest_detection = {}
+        self.visual_candidates = []
+        self.reference_counts = {}
         self.errors = []
         self.frame_metrics = []
         self.control_records = []
@@ -88,6 +92,9 @@ class VideoRun:
         self.controller_ms = []
         self.model_cold_s = None
         self.metadata = {}
+        self.recorder = None
+        self.audio = None
+        self.recording_stop = threading.Event()
         self.code_hashes = {p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in Path(__file__).parent.glob("*.py")}
 
     def request_stop(self, reason, **extra):
@@ -104,6 +111,11 @@ class VideoRun:
         """Dedicated pipe reader; no stdin I/O on the musical clock thread."""
         for line in sys.stdin:
             command=line.strip().lower()
+            if command=="record-stop":
+                self.control_records.append(dict(action="recording_stop",reason="operator_recording_stop",applied_s=time.perf_counter()))
+                self.recording_stop.set()
+                if self.recorder is not None:self.recorder.stop()
+                continue
             if command in ("stop","quit"):
                 self.request_stop("operator_pipe_stop")
                 if command=="quit":
@@ -185,8 +197,11 @@ class VideoRun:
                                  nominal_fps=cap.get(cv2.CAP_PROP_FPS),camera_buffer_request_accepted=buffer_request,
                                  sensor_exposure_timestamp_available=False,camera_path_unvalidated=True,
                                  camera_backend_requested=backend_name,camera_landmarks_saved=False,
-                                 video_recording=False,audio_playback=False)
+                                 video_recording=bool(getattr(self.args,"record_video",False)),audio_playback=False)
             self.epoch=time.perf_counter()
+            if getattr(self.args,'record_video',False) and not self.recording_stop.is_set():
+                from .recording import CameraRecording
+                self.recorder=CameraRecording(self.args.output,fps=30.)
             while not self.cancel.is_set():
                 begin=time.perf_counter()
                 ok,image=cap.read()
@@ -199,20 +214,32 @@ class VideoRun:
                 self.frames.put(dict(image=image,frame=self.decoded,clip_frame=self.decoded,repeat=0,
                                      source_s=arrived-self.epoch,pts_s=None,input_s=arrived,scheduled_s=arrived,
                                      decode_ms=(arrived-begin)*1000))
+                if self.recorder is not None and not self.recording_stop.is_set():
+                    self.recorder.offer(image,self.decoded,begin,arrived)
                 self.decoded+=1
+                if self.args.duration and arrived-self.epoch >= self.args.duration:
+                    self.request_stop("diagnostic_duration_limit")
+                    self.cancel.set()
         except Exception:
             self.errors.append(traceback.format_exc())
             self.request_stop("camera_fault")
         finally:
             if cap is not None:
                 cap.release()
+            if self.recorder is not None:self.recorder.close("camera_session_end")
             self.reader_done.set()
 
     def infer(self, model):
         import cv2
         detector = None
+        preview=None
+        if self.args.preview_fd is not None:
+            from .preview import PreviewWriter
+            preview=PreviewWriter(self.args.preview_fd)
         try:
-            with (self.args.output / "frames.jsonl").open("w", encoding="utf-8") as log:
+            last_prepare_status=None
+            with (self.args.output / "frames.jsonl").open("w", encoding="utf-8") as log, \
+                 (self.args.output / "gesture-diagnostics.jsonl").open("w",encoding="utf-8",buffering=1) as gesture_log:
                 while True:
                     packet = self.frames.take()
                     if packet is None:
@@ -223,7 +250,11 @@ class VideoRun:
                     begin = time.perf_counter()
                     image = packet.pop("image")
                     if detector is None:
-                        detector = VisualDetector(self.args.chin_y, image.shape[1]/image.shape[0], self.args.geometry)
+                        detector = (AutomaticVisualDetector(image.shape[1]/image.shape[0],
+                            conducting_side=pose_side_for_hand(self.args.conducting_hand),meter=self.args.meter) if self.args.chin_y is None else
+                                    VisualDetector(self.args.chin_y, image.shape[1]/image.shape[0], self.args.geometry))
+                        if not isinstance(detector,AutomaticVisualDetector):
+                            detector.side=pose_side_for_hand(self.args.conducting_hand)
                     # One decode and one downscale. Mirror the smaller image.
                     small = prepare_frame(cv2,image,self.args.width)
                     rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
@@ -231,9 +262,27 @@ class VideoRun:
                     result = model.process(rgb)
                     model_end = time.perf_counter()
                     raw = result_record(result)
+                    if isinstance(detector,AutomaticVisualDetector):detector.control_state=self.current_state
                     detection = detector.update(raw, packet["input_s"], model_end, packet["source_s"], packet["frame"], self.current_bpm)
                     detector_end = time.perf_counter()
-                    if detection["visible"]:
+                    if preview is not None:preview.offer(small,raw,detection.get("selected_side"),
+                        self.recorder is not None and self.recorder.status()["active"])
+                    self.latest_detection = {k:detection[k] for k in ('visible','association','reference_state',
+                        'reference_reason','reference_quality','reference_frame_gap_s','reference_gap_resumed','stop_checks','stop_approach_age_s','stop_confirmation_s','tracking_ready','wrist_visibility','detected_hands','selected_side','locked_side','hand_mesh_age_ms','beat_stage','beat_rejection','downstroke_shoulder_units','rebound_shoulder_units','prepare_hands') if k in detection}
+                    prepare_status=detection.get('prepare_hands')
+                    if prepare_status != last_prepare_status:
+                        gesture_log.write(json.dumps(dict(frame=packet['frame'],input_s=packet['input_s'],
+                            decision_s=detector_end,prepare_hands=prepare_status,selected_side=detection.get('selected_side')))+'\n')
+                        last_prepare_status=prepare_status
+                    reference_state = detection.get('reference_state', 'manual')
+                    self.reference_counts[reference_state] = self.reference_counts.get(reference_state, 0)+1
+                    if detection['observation'] or detection['prepare'] or detection['stop']:
+                        obs = detection['observation']
+                        self.visual_candidates.append(dict(frame=packet['frame'], input_s=packet['input_s'],
+                            decision_s=detector_end, prepare=detection['prepare'], prepare_hand=detection.get('prepare_hand'), stop=detection['stop'],
+                            observation=asdict(obs) if obs else None, reference_state=reference_state,
+                            candidate_feature=detection.get('candidate_feature')))
+                    if detection.get('tracking_ready', detection["visible"]):
                         self.latest_visible = packet["input_s"]
                     if self.args.experimental_auto_stop and detection["stop"] and self.current_state == "running":
                         self.request_stop("experimental_confirmed_pinch", frame=packet["frame"], input_s=packet["input_s"], source_s=packet["source_s"], evidence_s=detection.get("stop_evidence_stamp"), confirmation_s=detection.get("stop_confirmation_s"))
@@ -252,12 +301,14 @@ class VideoRun:
                     log_detection = dict(detection)
                     if log_detection["observation"]:
                         log_detection["observation"] = asdict(log_detection["observation"])
-                    log.write(json.dumps(frame_log_record(metric,log_detection,raw,camera=self.args.camera_index is not None), allow_nan=False)+"\n")
+                    log.write(json.dumps(frame_log_record(metric,log_detection,raw,
+                        camera=self.args.camera_index is not None or self.args.private_input), allow_nan=False)+"\n")
                     self.processed += 1
         except Exception:
             self.errors.append(traceback.format_exc())
             self.request_stop("vision_fault")
         finally:
+            if preview is not None:preview.close()
             model.close()
             self.vision_done.set()
 
@@ -273,14 +324,22 @@ class VideoRun:
                                              min_detection_confidence=.6, min_tracking_confidence=.6)
         self.model_cold_s = time.perf_counter()-process_started
         self.clock = MusicalClock(self.args.initial_bpm, self.args.meter, self.args.session_id,
-                                  score_beats=None if self.args.continuous_test else 48)
+                                  score_beats=None if self.args.continuous_test else 12*self.args.meter)
         self.current_bpm = self.clock.bpm
         self.current_state = self.clock.state
         encoder = WireEncoder(self.args.clock_domain)
-        publisher = Publisher(self.args.output, self.args.tcp_port if self.args.transport == "tcp" else None)
+        if self.args.beat_audio:
+            from .beat_audio import BeatAudio
+            self.audio = BeatAudio(self.args.output)
+            try:self.audio.start()
+            except Exception:
+                model.close()
+                raise
+        publisher = Publisher(self.args.output, self.args.tcp_port if self.args.transport == "tcp" else None, self.audio)
         publisher.thread.start()
         publisher.ready.wait(5)
         if publisher.error:
+            if self.audio is not None:self.audio.close()
             model.close()
             raise RuntimeError(publisher.error)
         if self.args.wait_client:
@@ -290,6 +349,7 @@ class VideoRun:
                 precise_wait(.01)
             if not publisher.connected.is_set():
                 publisher.close()
+                if self.audio is not None:self.audio.close()
                 model.close()
                 raise RuntimeError(publisher.error or "No consumer within --wait-client deadline")
         reader = threading.Thread(target=self.read_video if self.args.video else self.read_camera, name="frame-input", daemon=True)
@@ -299,7 +359,8 @@ class VideoRun:
         if self.args.stdin_controls:
             threading.Thread(target=self.read_operator_controls,name="operator-controls",daemon=True).start()
         next_snapshot = 0.
-        count_in = CountIn()
+        count_in = CountIn(self.args.meter)
+        next_status = 0.
         last_tick = None
         stop_applied = False
         start_applied = False
@@ -324,6 +385,39 @@ class VideoRun:
                 if self.args.stop_at is not None and not timed_stop_applied and self.epoch is not None and now >= self.epoch+self.args.stop_at:
                     self.request_stop("explicit_test_stop")
                     timed_stop_applied = True
+                if self.args.camera_index is not None and tracking_timeout(now, self.clock.state,
+                        self.clock.armed_at, self.latest_visible, self.args.tracking_timeout):
+                    if self.args.transport=='file':
+                        outgoing += self.clock.pause_tracking(now)
+                        count_in.reset()
+                        self.control_records.append(dict(action='tracking_pause',reason='tracking_lost_pause',
+                            applied_s=now,latest_reliable_s=self.latest_visible,reference=self.latest_detection))
+                    else:
+                        self.request_stop('tracking_lost_safety_timeout')
+                if now >= next_status:
+                    last_metric = self.frame_metrics[-1] if self.frame_metrics else {}
+                    recent = self.frame_metrics[-60:]
+                    fps = ((len(recent)-1)/(recent[-1]['model_end_s']-recent[0]['model_end_s'])
+                           if len(recent)>1 else None)
+                    status = dict(state=self.clock.state, bpm=self.clock.bpm, phase=self.clock.phase,
+                        meter=self.clock.meter,conducting_hand=self.args.conducting_hand,
+                        elapsed_s=now-self.epoch if self.epoch is not None else 0.,
+                        session_limit_s=self.args.duration,camera_active=self.epoch is not None and not self.reader_done.is_set(),
+                        camera_frames=self.decoded, inferred_frames=self.processed,
+                        dropped_frames=self.frames.dropped, recent_fps=fps, stop_reason=self.clock.stopped_reason,
+                        model_ms=last_metric.get('model_ms'), input_to_detection_ms=last_metric.get('input_to_detection_ms'),
+                        recording=self.recorder.status() if self.recorder is not None else dict(enabled=False,active=False),
+                        audio=self.audio.status() if self.audio is not None else dict(enabled=False,active=False),
+                        tracking=self.latest_detection, visual_candidates=len(self.visual_candidates),
+                        count_in_cues=len(count_in.cues), count_in_failed=count_in.failed,
+                        count_in_reason=count_in.last_reason,count_in_resets=count_in.resets,
+                        latest_visual_candidate=(self.visual_candidates[-1]["observation"]["kind"] if self.visual_candidates and self.visual_candidates[-1]["observation"] else None),
+                        accepted=self.clock.accepted, rejected=self.clock.rejected, monotonic_s=now)
+                    status_path=self.args.output/'live-status.json'
+                    temp_status=self.args.output/'live-status.tmp'
+                    temp_status.write_text(json.dumps(status,allow_nan=False),encoding='utf-8')
+                    temp_status.replace(status_path)
+                    next_status=now+.5
                 # STOP precedes all pending observations and predicted beats.
                 if self.stop_request.is_set() and not stop_applied:
                     reason = self.stop_info or {"reason":"requested"}
@@ -394,7 +488,7 @@ class VideoRun:
                 if outgoing or now >= next_snapshot:
                     message = encoder.encode(self.clock.message(now, reason=self.clock.stopped_reason))
                     message.update(cause)
-                    publisher.offer(message)
+                    publisher.offer(message, outgoing)
                     next_snapshot = now+.02
                 self.controller_ms.append((time.perf_counter()-tick_begin)*1000)
                 if self.args.camera_index is not None and self.clock.state in ("stopped","ended") and (publisher.acknowledged.is_set() or self.args.transport=="file"):
@@ -411,16 +505,20 @@ class VideoRun:
                 precise_wait(.002)
         except KeyboardInterrupt:
             now = time.perf_counter()
-            self.events.extend(self.clock.stop(now, "operator_interrupt"))
-            publisher.offer(encoder.encode(self.clock.message(now, reason="operator_interrupt")))
+            interrupted = self.clock.stop(now, "operator_interrupt")
+            self.events.extend(interrupted)
+            publisher.offer(encoder.encode(self.clock.message(now, reason="operator_interrupt")), interrupted)
             self.cancel.set()
         finally:
             self.cancel.set()
             reader.join(3)
             vision.join(5)
+            if self.recorder is not None:self.recorder.close("session_end",timeout=5.)
             publisher.close()
+            if self.audio is not None:self.audio.close()
         end = time.perf_counter()
-        for name, rows in (("events.jsonl", self.events), ("observations.jsonl", self.control_records)):
+        for name, rows in (("events.jsonl", self.events), ("observations.jsonl", self.control_records),
+                           ("visual-candidates.jsonl", self.visual_candidates)):
             with (self.args.output/name).open("w", encoding="utf-8") as file:
                 for row in rows:
                     file.write(json.dumps(row, allow_nan=False)+"\n")
@@ -442,12 +540,19 @@ class VideoRun:
                        dropped_frames=self.frames.dropped, dropped_fraction=self.frames.dropped/max(1,self.decoded),
                        longest_frame_queue=self.frames.max_depth, command_drops=self.command_drops,
                        transport_coalesced=publisher.coalesced, published_snapshots=publisher.sent,
+                       published_events=publisher.published_events,event_publication_drops=publisher.event_drops,
+                       audio=self.audio.status() if self.audio is not None else dict(enabled=False,active=False),
                        software_stop_ack=publisher.stop_ack, stop_ack_is_physical_stop=False,
                        skipped_clock_deadlines=self.clock.skipped_deadlines,
                        final_bpm=self.clock.bpm, final_phase=self.clock.phase, final_state=self.clock.state,
+                       stop_reason=self.clock.stopped_reason,
+                       recording=(self.recorder.final_report or self.recorder.status()) if self.recorder is not None else dict(enabled=False),
+                       reference_state_frames=self.reference_counts,
+                       perception_mode="automatic_body_relative" if self.args.chin_y is None else "manual_image_line",
                        metadata=self.metadata, epoch_monotonic_s=self.epoch, errors=self.errors,
                        publisher_error=publisher.error, hardware_calls=0, camera_calls=int(self.args.camera_index is not None))
         metrics.update(implementation_version=__version__,source_hashes_at_start=self.code_hashes)
+        metrics['metadata']['audio_playback']=self.args.beat_audio
         metrics["connect_errors"] = publisher.connect_errors
         metrics["configuration"] = {k:str(v) if isinstance(v,Path) else v for k,v in vars(self.args).items()}
         (self.args.output/"metrics.json").write_text(json.dumps(metrics,indent=2,allow_nan=False),encoding="utf-8")
@@ -464,13 +569,15 @@ def main():
     p.add_argument("--enable-camera",action="store_true",help="Explicit opt-in only after camera trial authorization; never used by video tests")
     p.add_argument("--initial-bpm", type=float, required=True)
     p.add_argument('--startup',choices=('explicit','count-in'),default='explicit',help='count-in consumes a full known 4/4 bar before score start; initial BPM is only a detector hint until then')
-    calibration_group=p.add_mutually_exclusive_group(required=True)
-    calibration_group.add_argument("--chin-y", type=float, help="Explicit normalized image chin calibration")
+    calibration_group=p.add_mutually_exclusive_group()
+    calibration_group.add_argument("--chin-y", type=float, help="Debug fallback: fixed normalized image chin calibration; default auto body-relative reference")
     calibration_group.add_argument('--calibration',type=Path,help='Numeric camera calibration JSON; camera mode only')
     p.add_argument("--output", type=Path, required=True, help="New isolated run directory; must not exist")
     p.add_argument("--clock-domain", required=True)
     p.add_argument("--session-id")
     p.add_argument("--meter", type=int, choices=(3,4), default=4)
+    p.add_argument('--conducting-hand',choices=('left','right'),default='right',help='Fixed anatomical hand for L, beats and Stop; never auto-switches')
+    p.add_argument('--private-input',action='store_true',help='Keep numeric/event diagnostics only for an authorized local recording; never log landmarks')
     p.add_argument("--width", type=int, default=640)
     p.add_argument("--geometry", choices=("native","legacy"), default="native")
     p.add_argument("--transport", choices=("tcp","file"), default="tcp")
@@ -484,7 +591,11 @@ def main():
     p.add_argument("--keyboard", action="store_true", help="Enter=prepare, S=start with configured BPM, Space=Stop, console focus required")
     p.add_argument("--stdin-controls",action="store_true",help="Launcher-only line protocol: prepare/start/stop/quit; reader is off the clock thread")
     p.add_argument("--repeat", type=int, default=1)
+    p.add_argument("--record-video",action="store_true",help="Explicitly authorized local raw camera video, no audio; bounded asynchronous encoder")
+    p.add_argument('--beat-audio',action='store_true',help='Output-only synthesized clicks from published beats; no microphone')
+    p.add_argument("--preview-fd", type=int, help=argparse.SUPPRESS)
     p.add_argument("--duration", type=float)
+    p.add_argument("--tracking-timeout", type=float, default=2., help="Camera safety stop after this many seconds without reliable tracking; not a Stop gesture")
     p.add_argument("--continuous-test", action="store_true", help="Disable 48-beat score end solely for sustained software tests")
     args = p.parse_args()
     args.calibration_data=None
@@ -495,16 +606,21 @@ def main():
         args.chin_y=args.calibration_data['chin_y']
     if args.keyboard and os.name != 'nt':
         p.error('--keyboard is Windows console only; on macOS use launch_rehearsal.py --interactive with line commands')
-    if args.startup=='count-in' and (args.meter!=4 or args.start_at is not None):
-        p.error('count-in requires known 4/4 and cannot be combined with a forced start time')
+    if args.startup=='count-in' and args.start_at is not None:
+        p.error('count-in cannot be combined with a forced start time')
     MusicalClock(args.initial_bpm,args.meter)
     if args.video is not None and not args.video.is_file():
         p.error("--video must name an existing local file")
     if args.camera_index is not None and (args.camera_index<0 or not args.enable_camera):
         p.error("camera trial requires nonnegative --camera-index and explicit --enable-camera; no camera was opened")
-    if args.repeat < 1 or args.width < 256 or args.width > 1920 or not 0 < args.chin_y < 1:
+    if args.repeat < 1 or args.width < 256 or args.width > 1920 or args.chin_y is not None and not 0 < args.chin_y < 1:
         p.error("invalid repeat/width/chin calibration")
+    if not .5 <= args.tracking_timeout <= 5 or args.duration is not None and not 0 < args.duration <= 600:
+        p.error("tracking timeout must be 0.5..5 s; diagnostic duration must be 0..600 s")
+    if args.record_video and (args.camera_index is None or args.duration is None):
+        p.error("Recording requires camera mode and an explicit bounded diagnostic duration")
     args.output.mkdir(parents=True,exist_ok=False)
     metrics=VideoRun(args).run()
-    if metrics["errors"] or metrics["publisher_error"] or args.transport=="tcp" and metrics["software_stop_ack"] is None:
+    recording_failed=metrics.get("recording",{}).get("enabled") and (not metrics["recording"].get("finalized") or metrics["recording"].get("error"))
+    if recording_failed or metrics["errors"] or metrics["publisher_error"] or metrics.get('audio',{}).get('error') or args.transport=="tcp" and metrics["software_stop_ack"] is None:
         raise SystemExit(1)

@@ -27,3 +27,5 @@ chin-*.json
 *APPROVED*.json
 !cello/configs/hardware-review.UNAPPROVED.json
 !cello/configs/onsite-checklist.UNAPPROVED.json
+
+*.mkv

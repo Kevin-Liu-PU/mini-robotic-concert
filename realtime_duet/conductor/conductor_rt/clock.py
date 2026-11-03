@@ -92,7 +92,7 @@ class MusicalClock:
 
     def arm(self, now, reason="manual"):
         self.advance(now)
-        if self.state in ("running", "stopped", "ended"):
+        if self.state in ("armed", "running", "stopped", "ended"):
             return []
         self.state = "armed"
         self.armed_at = now
@@ -146,6 +146,15 @@ class MusicalClock:
         self.tempo_evidence = "completed_causal_count_in" if reason == 'causal_count_in_downbeat' else "initial_explicit"
         return [self.message(now, "start", reason=reason),
                 self.message(now, "beat", beat_index=0, origin="start_command", lateness_s=0.)]
+
+    def pause_tracking(self, now):
+        """Beat-only safety pause; not a Stop gesture and never auto-resumes."""
+        self.advance(now)
+        if self.state not in ('armed','running'):
+            return []
+        self.state = 'paused'
+        self.correction = 0.
+        return [self.message(now, 'tracking_pause', reason='tracking_lost_pause')]
 
     def stop(self, now, reason="manual"):
         self.advance(now)

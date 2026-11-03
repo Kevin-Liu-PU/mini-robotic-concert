@@ -160,9 +160,10 @@ class ClockTests(unittest.TestCase):
         self.assertEqual(out,[])
         self.assertEqual(c.state,"armed")
 
-    def test_latest_prepare_invalidates_older_buffered_downbeat(self):
+    def test_new_prepare_after_tracking_pause_invalidates_old_buffered_downbeat(self):
         c=MusicalClock(60)
         c.arm(10)
+        c.pause_tracking(10.95)
         c.arm(11)
         self.assertEqual(c.start(11.1,"visual_first_downbeat",BeatObservation(10.9,11.05,.9,frame=3)),[])
         self.assertEqual(c.armed_at,11)

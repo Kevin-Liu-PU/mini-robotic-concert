@@ -12,7 +12,7 @@ class WireEncoder:
     def encode(self, snapshot):
         self.sequence += 1
         state = snapshot["state"]
-        state = "ready" if state in ("idle", "armed") else state
+        state = "ready" if state in ("idle", "armed", "paused") else state
         stopped = state in ("stopped", "ended")
         q = snapshot["quality"]
         quality = "tracked" if q["mode"] == "observed" and q["vision_available"] else "predicted"

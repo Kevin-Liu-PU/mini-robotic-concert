@@ -3,15 +3,20 @@ import json
 import socket
 import threading
 import time
+from collections import deque
 from .timing import precise_wait
 
 
 class Publisher:
-    def __init__(self, folder, port=None):
+    def __init__(self, folder, port=None, audio=None):
         self.folder = folder
         self.port = port
         self.lock = threading.Lock()
         self.pending = None
+        self.event_pending = deque()
+        self.audio = audio
+        self.event_drops = 0
+        self.published_events = 0
         self.finished = threading.Event()
         self.acknowledged = threading.Event()
         self.ready = threading.Event()
@@ -28,17 +33,29 @@ class Publisher:
         self.evidence_to_publication_ms = []
         self.thread = threading.Thread(target=self.run, name="clock-publisher", daemon=True)
 
-    def offer(self, message):
+    def offer(self, message, events=()):
         # O(1), no serialization or I/O in caller.
         with self.lock:
             if self.pending is not None:
                 self.coalesced += 1
             self.pending = message
+            for event in events:
+                if len(self.event_pending) >= 128:
+                    self.event_drops += 1
+                    self.error = 'bounded event publication queue overflow'
+                    if self.audio is not None:self.audio.cancel()
+                else:self.event_pending.append(event)
 
     def pop(self):
         with self.lock:
             msg, self.pending = self.pending, None
         return msg
+
+    def pop_events(self):
+        with self.lock:
+            events = list(self.event_pending)
+            self.event_pending.clear()
+        return events
 
     def run(self):
         client = None
@@ -53,8 +70,13 @@ class Publisher:
         next_connect = 0.
         try:
             self.ready.set()
-            with (self.folder / "stream.jsonl").open("w", encoding="utf-8", buffering=1) as log:
-                while not self.finished.is_set() or self.pending is not None:
+            with (self.folder / "stream.jsonl").open("w", encoding="utf-8", buffering=1) as log, (self.folder/'published-events.jsonl').open('x', encoding='utf-8', buffering=1) as event_log:
+                while not self.finished.is_set() or self.pending is not None or self.event_pending:
+                    for event in self.pop_events():
+                        published_event = dict(event, publisher_monotonic_ns=time.perf_counter_ns())
+                        event_log.write(json.dumps(published_event, allow_nan=False)+'\n')
+                        self.published_events += 1
+                        if self.audio is not None:self.audio.submit_published(published_event)
                     msg = self.pop()
                     if msg is not None:
                         session = msg["session_id"]

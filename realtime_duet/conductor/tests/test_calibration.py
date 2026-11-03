@@ -118,14 +118,12 @@ class CalibrationTests(unittest.TestCase):
         with self.assertRaises(ValueError):validate_calibration(good,0,640,1200,(1920,1080))
         self.assertEqual(validate_calibration(good,0,640,1200,(1280,720)),good)
 
-    def test_launcher_missing_camera_calibration_rejects_before_children_or_output(self):
-        with tempfile.TemporaryDirectory() as temp:
-            out=Path(temp)/'run'
-            args=['launch_rehearsal.py','--camera','0','--initial-bpm','90','--output',str(out)]
-            with patch('sys.argv',args),patch('subprocess.Popen') as spawn,patch('sys.stderr',io.StringIO()) as err:
-                with self.assertRaises(SystemExit) as exc:integration_replay.main()
-                self.assertEqual(exc.exception.code,2);self.assertIn('no camera was opened',err.getvalue())
-                spawn.assert_not_called();self.assertFalse(out.exists())
+    def test_launcher_defaults_to_automatic_reference_without_calibration(self):
+        import test_launcher
+        command=test_launcher.LauncherTests().build(['--camera','0'])
+        self.assertNotIn('--chin-y',command['sender'])
+        self.assertNotIn('--calibration',command['sender'])
+        self.assertIn('--enable-camera',command['sender'])
 
     def test_launcher_calibration_file_is_forwarded_not_downgraded_to_number(self):
         import test_launcher
