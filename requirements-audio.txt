@@ -1,3 +1,0 @@
-# Explicit audio dependency; requirements-lock.txt is the validated full install.
--r requirements.txt
-sounddevice==0.5.6

@@ -1,0 +1,74 @@
+{
+ "note": "Mock robot on a fake clock. Times are seconds after the stream's first record.",
+ "armed_at_u": 0.119,
+ "contact_force_n_mock": 3.6,
+ "bows": [
+  {
+   "index": 0,
+   "direction": "down",
+   "dispatched_at_s": 1.004,
+   "beat_at_dispatch": 0.059,
+   "ends_on_beat": 4.0,
+   "tempo_bpm": 66.0,
+   "quality": "tracked",
+   "duration_s": 3.582,
+   "u_start": 0.119,
+   "u_end": 0.881,
+   "length_mm": 400.0,
+   "speed_m_s": 0.1147,
+   "bar_line_error_beats": 0.004,
+   "interrupted": null
+  },
+  {
+   "index": 1,
+   "direction": "up",
+   "dispatched_at_s": 4.59,
+   "beat_at_dispatch": 4.004,
+   "ends_on_beat": 8.0,
+   "tempo_bpm": 66.0,
+   "quality": "tracked",
+   "duration_s": 3.633,
+   "u_start": 0.881,
+   "u_end": 0.119,
+   "length_mm": 400.0,
+   "speed_m_s": 0.113,
+   "bar_line_error_beats": 0.126,
+   "interrupted": null
+  },
+  {
+   "index": 2,
+   "direction": "down",
+   "dispatched_at_s": 8.226,
+   "beat_at_dispatch": 8.126,
+   "ends_on_beat": 12.0,
+   "tempo_bpm": 70.0,
+   "quality": "tracked",
+   "duration_s": 3.321,
+   "u_start": 0.119,
+   "u_end": 0.881,
+   "length_mm": 400.0,
+   "speed_m_s": 0.1243,
+   "bar_line_error_beats": -1.44,
+   "interrupted": "conductor_stop:stopped"
+  }
+ ],
+ "ended": "conductor_stop:stopped",
+ "completed_beats": 8.0,
+ "stop": {
+  "requested_at_s": 10.2,
+  "standstill_confirmed": true,
+  "standstill_after_ms": 112.2,
+  "travel_after_request_mm": 3.86
+ },
+ "lifted": true,
+ "frames_sent_to_conductor": [
+  {
+   "version": 1,
+   "kind": "ACK",
+   "session_id": "example-session",
+   "clock_domain": "shared-local-run",
+   "ack_sequence": 205,
+   "status": "stopped_latched"
+  }
+ ]
+}

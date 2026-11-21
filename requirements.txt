@@ -1,4 +1,6 @@
+# Camera conductor, receivers without hardware, and the tests. Validated with Python 3.11.
 mediapipe==0.10.21
 opencv-contrib-python==4.11.0.86
 numpy==1.26.4
-cv2-enumerate-cameras==1.4.0
+sounddevice==0.5.6
+pytest

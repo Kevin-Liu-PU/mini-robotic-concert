@@ -1,22 +1,16 @@
-# Generated environments, model assets, private local settings and outputs.
+# Environments and caches
 .venv/
 venv/
 __pycache__/
 *.py[cod]
 .env
 .env.*
-models/*.task
-models/*.download
-recordings/
-logs/
-demo-recordings/
-*-validation/
-*.jsonl
-*.log
+
+# Local recordings, logs and run folders. Nothing recorded on a machine is published.
+conductor/runs/
+conductor/_data/
+conductor_cello/runs/
+conductor_glock/runs/
 *.avi
-*.mp4
 *.wav
-*.png
-*.jpg
-*.jpeg
-config-local*.json
+*.log

@@ -1,0 +1,3 @@
+# Only needed with the real instruments.
+ur_rtde==1.6.5    # robot arm (conductor_cello without --mock)
+pyserial==3.5     # solenoid controller (conductor_glock with --go)
