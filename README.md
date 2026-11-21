@@ -1,4 +1,4 @@
-# Mini Robotic Concert
+# A Mini Robotic Concert: Human Conducting and Multi-Robot Coordination
 
 A Python prototype in which a person conducts and two robots play. A camera
 follows the conductor's hand and turns the gesture into a beat clock. A UR5e arm
